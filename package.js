@@ -1,28 +1,28 @@
 Package.describe({
-  name: 'selaias:underarmour',
+  // name: 'selaias:underarmour',
+  summary: 'Under Armour (MapMyFitness) OAuth flow',
   version: '0.1.0',
-  summary: 'An implementation of the Under Armour (mapmyrun) OAuth flow.',
-  git: 'https://github.com/selaias/underarmour.git',
-  documentation: 'README.md'
+  // git: 'https://github.com/selaias/underarmour.git'
 });
 
-Npm.depends({'request': "2.53.0"});
+Package.on_use(function(api) {
 
-Package.onUse(function(api) {
-  
-  api.versionsFrom('1.0.3.1');
+  api.versionsFrom('METEOR@1.0');
+
   api.use('oauth2', ['client', 'server']);
   api.use('oauth', ['client', 'server']);
   api.use('http', ['server']);
   api.use('templating', 'client');
   api.use('underscore', 'server');
   api.use('random', 'client');
-  
   api.use('service-configuration', ['client', 'server']);
-  
-  api.addFiles(['underarmour_configure.html', 'underarmour_configure.js'], 'client');
-  api.addFiles('underarmour_client.js', 'client');
-  api.addFiles('underarmour_server.js', 'server');
-  
+
   api.export('UnderArmour');
+
+  api.add_files(
+    ['underarmour_configure.html', 'underarmour_configure.js'],
+    'client');
+
+  api.add_files('underarmour_server.js', 'server');
+  api.add_files('underarmour_client.js', 'client');
 });

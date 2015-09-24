@@ -1,114 +1,93 @@
-var Future = Npm.require('fibers/future');
-var request = Npm.require('request')
-
-
 UnderArmour = {};
+
+// https://developer.underarmour.com/docs/v71_User
+UnderArmour.whitelistedFields = ['birthdate', 'display_name', 'email', 'first_name',
+                        'gender', 'last_name', 'location', 'username'];
+
 
 OAuth.registerService('underArmour', 2, null, function(query, callback) {
 
-  var accessToken= getTokenResponse(query)
-
-  var userData = getUserData(accessToken.access_token)
+  var response = getTokenResponse(query);
+  var accessToken = response.access_token;
+  var identity = getIdentity(accessToken);
 
   var serviceData = {
-    accessToken: accessToken.access_token,
-    refresgToken: accessToken.refresh_token,
-    expiresAt: accessToken.expires_in,
-    id: userData.id
+    id: response.user_id + "",
+    accessToken: accessToken,
+    refreshToken: response.refresh_token,
+    expiresAt: (+new Date) + (1000 * response.expires_in)
   };
 
-  // include fields from underarmour
-  // https://developer.underarmour.com/io-docs
-  var whitelisted = ['username', 'location.country', 'gender', 'birthday', 'email', 'display_name'];
-
-  var fields = _.pick(userData, whitelisted);
+  var fields = _.pick(identity, UnderArmour.whitelistedFields);
   _.extend(serviceData, fields);
 
   return {
     serviceData: serviceData,
-    options: {profile: {name: userData.first_name, email: userData.email, fullName: userData.display_name, gender: userData.gender, location: userData.location.country}}
+    options: {profile: {name: identity.display_name}}
   };
 });
 
-var userAgent = "Meteor";
-if (Meteor.release)
-  userAgent += "/" + Meteor.release;
-
-
-// returns an object containing:
+// return an object containining:
 // - accessToken
-// - expiresIn: lifetime of token in seconds
+// - expires_in: the TTL, in seconds, for the access token
+// - refresh_token: a string the Client Application may trade to get a new access token
+// - scope: the scope of operations allowed to the access token
 var getTokenResponse = function (query) {
-
   var config = ServiceConfiguration.configurations.findOne({service: 'underArmour'});
   if (!config)
     throw new ServiceConfiguration.ConfigError();
 
-  var request_params = {
-    grant_type: "authorization_code",
+  var params = {
     code: query.code,
-    client_id: config.client_id,
+    client_id: config.clientId,
     client_secret: OAuth.openSecret(config.secret),
-    redirect_uri: OAuth._redirectUri('underArmour', config)
-    //redirect_uri: OAuth._redirectUri('underarmour', config, null, {replaceLocalhost: true})
+    redirect_uri: OAuth._redirectUri('underArmour', config, null, {replaceLocalhost: true}),
+    grant_type: 'authorization_code'
   };
   var paramlist = [];
-  for (var pk in request_params) {
-    paramlist.push(pk + "=" + request_params[pk]);
-  };
-  var body_string = paramlist.join("&");
-
-  var request_details = {
-    method: "POST",
-    headers: {'content-type' : 'application/x-www-form-urlencoded', 'Api-Key' : config.client_id},
-    uri: 'https://api.ua.com/v7.0/oauth2/uacf/access_token/',
-    body: body_string
+  for (var pk in params) {
+    paramlist.push(pk + "=" + params[pk]);
   };
 
-  var fut = new Future();
-  request(request_details, function(error, response, body) {
-     var responseContent;
-    try {
-      responseContent = JSON.parse(body);
-    } catch(e) {
-      error = new Meteor.Error(204, 'Response is not a valid JSON string.');
-      fut.throw(error);
-    } finally {
-      fut.return(responseContent);
-    }
-  });
-  var res = fut.wait();
-  return res;
+  var response;
+  try {
+    response = HTTP.post(
+      "https://api.ua.com/v7.1/oauth2/uacf/access_token/", {
+        content: paramlist.join("&"),
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          'Api-Key': config.clientId
+        }
+      });
+  } catch (err) {
+    throw _.extend(new Error("Failed to complete OAuth handshake with Under Armour. " + err.message),
+                   {response: err.response});
+  }
+
+  if (response.data.error) { // if the http response was a json object with an error attribute
+    throw new Error("Failed to complete OAuth handshake with Under Armour. " + response.data.error);
+  } else {
+    return response.data;
+  }
 };
 
-//////////////////////////////////////////////// 
-// We need to first fetch the UserID
-////////////////////////////////////////////////
-var getUserData = function (accessToken) {
+var getIdentity = function (accessToken, userId) {
   var config = ServiceConfiguration.configurations.findOne({service: 'underArmour'});
-  
   if (!config)
     throw new ServiceConfiguration.ConfigError();
-  
-  var fut = new Future();
-  var request_user = {
-    method: 'GET',
-    headers: {'Authorization' : 'Bearer ' + accessToken, 'Api-Key' : config.client_id},
-    uri: "https://oauth2-api.mapmyapi.com/v7.0/user/self/"
-  };
-  request(request_user, function(error, response, body) {
-    var responseContent;
-    try {
-      responseContent = JSON.parse(body);
-    } catch(e) {
-      error = new Meteor.Error(204, 'Response is not a valid JSON string.');
-      fut.throw(error);
-    } finally {
-      fut.return(responseContent);
-    }
-  });
-  var userRes = fut.wait();
-  return userRes;
+
+  try {
+    return HTTP.get(
+      "https://api.ua.com/v7.1/user/self/", {
+        headers: {
+          'Authorization': 'Bearer ' + accessToken,
+          'Api-Key': config.clientId
+        }
+      }).data;
+  } catch (err) {
+    throw _.extend(new Error("Failed to fetch identity from Weibo. " + err.message),
+                   {response: err.response});
+  }
 };
 
 UnderArmour.retrieveCredential = function(credentialToken, credentialSecret) {
